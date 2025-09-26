@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyrowah Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .nav-item.active {
+            border-left: 4px solid #3B82F6;
+            background: #EFF6FF;
+        }
+        #map { 
+            height: 100%;
+            width: 100%;
+            border-radius: 0.5rem;
+        }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3B82F6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Setup Modal -->
+    <div id="setupModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full">
+            <h2 class="text-2xl font-bold mb-6">Configure Monitoring Points</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Surface Area (in hectares)</label>
+                    <input type="number" id="area-input" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <p id="recommendation-text" class="text-sm text-gray-600"></p>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Number of Points to Monitor</label>
+                    <input type="number" id="points-input" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <button id="start-button" disabled class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50">
+                    Start Selecting Points
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex h-screen">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white border-r border-gray-200 pt-5 pb-4 flex flex-col">
+            <div class="flex items-center flex-shrink-0 px-4">
+                <h1 class="text-xl font-bold text-gray-900">Hyrowah Dashboard</h1>
+            </div>
+            <nav class="mt-5 flex-1 space-y-1">
+                <a href="#" class="nav-item active flex items-center px-6 py-3 text-sm font-medium text-gray-900">
+                    <i class="bi bi-geo-alt mr-3"></i>
+                    Map View
+                </a>
+                <a href="#" class="nav-item flex items-center px-6 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                    <i class="bi bi-graph-up mr-3"></i>
+                    Point Analysis
+                </a>
+                <a href="#" class="nav-item flex items-center px-6 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                    <i class="bi bi-clipboard-data mr-3"></i>
+                    System Overview
+                </a>
+                <a href="#" class="nav-item flex items-center px-6 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                    <i class="bi bi-search mr-3"></i>
+                    Outlier Analysis
+                </a>
+                <a href="#" class="nav-item flex items-center px-6 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                    <i class="bi bi-gear mr-3"></i>
+                    Remediation Simulator
+                </a>
+            </nav>
+            <div class="px-4 mt-6">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Upload Data</label>
+                <input type="file" accept=".csv,.xlsx" id="file-upload" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto p-6">
+            <div class="h-full" id="map"></div>
+        </main>
+
+        <!-- Management Panel -->
+        <aside class="w-80 bg-white border-l border-gray-200 p-6 overflow-y-auto">
+            <div class="space-y-6">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900" id="points-header">Points Placed: 0 / 0</h3>
+                    <p class="mt-1 text-sm text-gray-500">Click on the map to place monitoring points</p>
+                </div>
+                
+                <div class="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-lg">
+                    <table class="min-w-full divide-y divide-gray-300">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Point #</th>
+                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Lat</th>
+                                <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Long</th>
+                                <th class="py-3.5 pl-3 pr-4 text-right text-sm font-semibold text-gray-900">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200 bg-white" id="points-table">
+                            <!-- Points will be added here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <button id="export-button" disabled class="w-full bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50">
+                    Export to Excel
+                </button>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // State Management
+        let map;
+        let markers = [];
+        let points = [];
+        let targetPointCount = 0;
+
+        // Initialize Map
+        function initMap() {
+            map = L.map('map').setView([13.0827, 80.2707], 12); // Chennai coordinates
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            
+            map.on('click', function(e) {
+                if (points.length < targetPointCount) {
+                    addPoint(e.latlng);
+                }
+            });
+        }
+
+        // Setup Modal Logic
+        document.getElementById('area-input').addEventListener('input', function(e) {
+            const area = parseFloat(e.target.value);
+            if (area > 0) {
+                const recommendedPoints = Math.ceil(area / 5); // 1 point per 5 hectares
+                document.getElementById('recommendation-text').textContent = `Recommended Points: ${recommendedPoints}`;
+                document.getElementById('points-input').value = recommendedPoints;
+                document.getElementById('start-button').disabled = false;
+            }
+        });
+
+        document.getElementById('start-button').addEventListener('click', function() {
+            targetPointCount = parseInt(document.getElementById('points-input').value);
+            document.getElementById('points-header').textContent = `Points Placed: 0 / ${targetPointCount}`;
+            document.getElementById('setupModal').style.display = 'none';
+            initMap();
+        });
+
+        // Point Management
+        function addPoint(latlng) {
+            const marker = L.marker(latlng).addTo(map);
+            markers.push(marker);
+            points.push(latlng);
+            renderTable();
+        }
+
+        function deletePoint(index) {
+            map.removeLayer(markers[index]);
+            markers.splice(index, 1);
+            points.splice(index, 1);
+            renderTable();
+        }
+
+        function renderTable() {
+            const table = document.getElementById('points-table');
+            table.innerHTML = '';
+            
+            points.forEach((point, i) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="py-4 pl-4 pr-3 text-sm font-medium text-gray-900">${i + 1}</td>
+                    <td class="px-3 py-4 text-sm text-gray-500">${point.lat.toFixed(6)}</td>
+                    <td class="px-3 py-4 text-sm text-gray-500">${point.lng.toFixed(6)}</td>
+                    <td class="py-4 pl-3 pr-4 text-right">
+                        <button onclick="deletePoint(${i})" class="text-red-600 hover:text-red-900">Delete</button>
+                    </td>
+                `;
+                table.appendChild(row);
+            });
+
+            document.getElementById('points-header').textContent = `Points Placed: ${points.length} / ${targetPointCount}`;
+            document.getElementById('export-button').disabled = points.length !== targetPointCount;
+        }
+
+        // Export Functionality
+        document.getElementById('export-button').addEventListener('click', function() {
+            const data = points.map((point, i) => ({
+                'Point #': i + 1,
+                'Latitude': point.lat,
+                'Longitude': point.lng
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Points");
+            XLSX.writeFile(wb, "monitoring_points.xlsx");
+        });
+
+        // File Upload Handler
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                // Show loading state
+                const loadingSpinner = document.createElement('div');
+                loadingSpinner.className = 'loading-spinner';
+                document.querySelector('main').appendChild(loadingSpinner);
+
+                // Process file (simulated for now)
+                setTimeout(() => {
+                    loadingSpinner.remove();
+                    alert('Data processed successfully!');
+                }, 2000);
+            }
+        });
+
+        // Navigation
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', function() {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
